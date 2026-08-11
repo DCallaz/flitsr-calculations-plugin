@@ -123,12 +123,12 @@ def experiment(m: int, f: int, l_max: int, o: int, q: int, calc: Calc,
             selected.update(choices)
             f_locs.setdefault(i, set()).update(choices)
             for choice in choices:
-                fs.setdefault(choice, set()).add(i)
+                fs.setdefault(int(choice), set()).add(int(i))
         # now get overlaps
         for ovlp in overlaps:
             o_elem = rng.choice(list(elems.difference(selected)))
             selected.add(o_elem)
-            fs.setdefault(o_elem, set()).update(ovlp)
+            fs.setdefault(int(o_elem), set()).update([int(o) for o in ovlp])
     e_start = time.time()
     exact = exact_method(fs, q, elems, calc=calc, bu=x)
     e_end = time.time()
