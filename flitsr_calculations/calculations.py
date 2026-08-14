@@ -135,6 +135,14 @@ def partial_sampled_recall(ties: Ties, collapse: bool, samples: int,
     return fault_num/len(ties.faults)
 
 
+@calculation(recall_print_name('recall runtime'),
+             "Display the runtime for calculating the recall at x",
+             "recall-time")
+@parameter('x', type=stop_type)
+def recall_rt(ties: Ties, collapse: bool, x: int) -> float:
+    return get_runtime('recall', {'x': x})
+
+
 @calculation(recall_print_name('full sampled recall runtime'),
              "Display the runtime for (full sampled) recall at x",
              "full-sampled-recall-time")
