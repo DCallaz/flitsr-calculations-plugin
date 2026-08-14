@@ -3,7 +3,7 @@ from argparse import ArgumentParser, ArgumentTypeError, ArgumentError
 from numpy import random
 from typing import Set, Dict, List, Optional, Collection, Tuple, Union, \
         overload, Iterable
-from math import comb
+from math import comb, isclose
 from flitsr.tie import Ties, Tie
 from flitsr.calculations.perms import exact_method, type_faults, \
         type_def_strt, Calc
@@ -246,7 +246,7 @@ def exp_iter(args):
                                            x=x, fs=args.faults)
                 ft = timedelta(seconds=f_dur)
                 et = timedelta(seconds=e_dur)
-                if (sfdiv(abs(exact - formula), exact) > 5e-2):
+                if (not isclose(exact, formula, rel_tol=5e-2, abs_tol=1e-4)):
                     print(f'FAILED {formula} != {exact} [{ft};{et}] ({fs})',
                           file=out)
                 else:
