@@ -159,12 +159,16 @@ def get_raw_results(merge: Merge, metrics: Collection[str], modes: Collection[st
     for metric, mode, calc in product(metrics, modes, calcs):
         avgs = merge.avgs[mode][metric]
         calcs = list(avgs.keys())
+        # get stopping criteria nums (based on full enumeration)
+        r = re.compile(re.escape(name(Type.FULL, calc, "<rpl>"))
+                         .replace("<rpl>", "([0-9]+)"))
+        matches = filter(None, map(r.match, calcs))
+        nums = sorted([m.group(1) for m in matches])
         for type_ in types[calc]:  # FULL, BASE, PART, (STMN)
+            # check if this type_ is available (if not, skip it)
             r = re.compile(re.escape(name(type_, calc, "<rpl>"))
-                             .replace("<rpl>", "([0-9]+)"))
-            matches = filter(None, map(r.match, calcs))
-            nums = [m.group(1) for m in matches]
-            if (len(nums) == 0):
+                           .replace("<rpl>", "([0-9]+)"))
+            if (not any(r.match(c) for c in calcs)):
                 continue
             rs: Dict[str, np.ndarray] = {}
             for measure in Measure:  # RESULT, RUNTIME
