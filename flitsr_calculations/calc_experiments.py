@@ -1,220 +1,29 @@
-from datetime import datetime, timedelta
-import argparse
-import re
-import sys
+from datetime import timedelta
+from argparse import ArgumentParser, ArgumentTypeError
 from os import path as osp
 import time
-from ast import literal_eval
-from fractions import Fraction
-from typing import Dict, Set, Any, List, Optional, NamedTuple, Tuple, Union, \
-        Iterator, TextIO
-from functools import total_ordering
-from itertools import product
-from collections import defaultdict
+from typing import Dict, List, Tuple, Callable
+from itertools import chain
+from collections import Counter
+import numpy as np
 from flitsr.calculations.perms import exact_method, Calc
 from flitsr.calculations import BUModel
+from flitsr.spectrum import Spectrum
+from flitsr.tie import Tie, _CollapsableFault
+from flitsr_calculations.merge_custom import Type, types, RawResults, \
+        RawData, rec_dd, plot_violins, calc_names, type_order, typ_names
+from experiment_helper import ExpConfig, Exp, read_exp_file, intRange
 # from matplotlib import pyplot as plt
 
 
-@total_ordering
-class ExpConfig:
-    def __init__(self, m: Union[str, int], f: Union[str, int],
-                 l: Union[str, int], o: Union[str, int], q: Union[str, int]):
-        if (isinstance(m, str)):
-            self.m = int(m)
-        else:
-            self.m = m
-        if (isinstance(f, str)):
-            self.f = int(f)
-        else:
-            self.f = f
-        if (isinstance(l, str)):
-            self.l = int(l)
-        else:
-            self.l = l
-        if (isinstance(o, str)):
-            self.o = int(o)
-        else:
-            self.o = o
-        if (isinstance(q, str)):
-            self.q = int(q)
-        else:
-            self.q = q
-        self.tup = (self.m, self.f, self.l, self.o, self.q)
-        self.hash = hash(self.tup)
-
-    def __repr__(self):
-        return f"ExpConfig({str(self)})"
-
-    def __str__(self):
-        return f"m={self.m}, f={self.f}, l={self.l}, o={self.o}, q={self.q}"
-
-    def __hash__(self):
-        return self.hash
-
-    def __eq__(self, other):
-        if (not hasattr(other, 'tup')):
-            return NotImplemented
-        return self.tup == other.tup
-
-    def __lt__(self, other):
-        if (not hasattr(other, 'tup')):
-            return NotImplemented
-        return self.tup < other.tup
-
-
-class Exp:
-    def __init__(self, result: str, formula_val: str, expect_val: str,
-                 formula_time: str, expect_time: str, faults: str):
-        self.result: bool = True if result == 'Passed' else False
-        self.formula_val: float = float(formula_val)
-        self.expect_val: float = float(expect_val)
-        self.formula_time: timedelta = convert(formula_time)
-        self.expect_time: timedelta = convert(expect_time)
-        self.faults: Dict[Any, Set[int]] = literal_eval(faults)
-
-    def __repr__(self):
-        return f"Exp({str(self)})"
-
-    def __str__(self):
-        res = 'Passed' if self.result else 'FAILED'
-        eq = '=' if self.result else '!='
-        return (f"{res} {self.formula_val} {eq} {self.expect_val} "
-                f"[{self.formula_time};{self.expect_time}] ({self.faults})")
-
-
-class Setup(NamedTuple):
-    m: List[int]
-    f: List[int]
-    l: List[int]
-    o: List[int]
-    q: List[int]
-
-    def __repr__(self):
-        return f'Setup({self})'
-
-    def __str__(self):
-        return (f'Setup: m={self.m}, f={self.f}, l={self.l}, o={self.o}, '
-                f'q={self.q}')
-
-    def __iter__(self):
-        return SetupIter(self)
-
-
-class SetupIter(Iterator):
-    def __init__(self, setup: Setup):
-        self.iter = product(setup.m, setup.f, setup.l, setup.o, setup.q)
-
-    def __next__(self):
-        return ExpConfig(*next(self.iter))
-
-
-def convert(s: str):
-    t = datetime.strptime(s, "%H:%M:%S.%f")
-    return timedelta(hours=t.hour, minutes=t.minute, seconds=t.second,
-                     microseconds=t.microsecond)
-
-
-def read_exp_file(file: str) -> Tuple[Dict[ExpConfig, List[Exp]],
-                                      Optional[Setup]]:
-    exps: Dict[ExpConfig, List[Exp]] = {}
-    setup: Optional[Setup] = None
-    cur_exp_conf = None
-    with open(file) as inp:
-        for i, line in enumerate(inp):
-            line = line.strip()
-            if (line.startswith("Setup")):
-                m = re.fullmatch("Setup: m=(.+), f=(.+), l=(.+), o=(.+), "
-                                 "q=(.+)", line)
-                if (m is None):
-                    raise ValueError(f"Could not read in line {i}: \"{line}\"")
-                else:
-                    args = []
-                    for i in range(1, 6):
-                        args.append(literal_eval(m.group(i)))
-                    setup = Setup(*args)
-            elif (line.startswith("m=")):
-                m = re.fullmatch("m=([0-9]+), f=([0-9]+), l=([0-9]+), "
-                                 "o=([0-9]+), q=([0-9]+)", line)
-                if (m is None):
-                    raise ValueError(f"Could not read in line {i}: \"{line}\"")
-                else:
-                    expConf = ExpConfig(m.group(1), m.group(2), m.group(3),
-                                        m.group(4), m.group(5))
-                    cur_exp_conf = expConf
-                    exps[cur_exp_conf] = list()
-            else:
-                m = re.fullmatch("(Passed|FAILED) ([0-9.e-]+) !?= ([0-9.e-]+) "
-                                 "\\[([0-9.:]+);([0-9.:]+)\\] \\(({.+})\\)",
-                                 line)
-                if (m is None):
-                    raise ValueError(f"Could not read in line {i}: \"{line}\"")
-                else:
-                    exp = Exp(m.group(1), m.group(2), m.group(3), m.group(4),
-                              m.group(5), m.group(6))
-                    if (cur_exp_conf is None):
-                        raise ValueError("No current experiment config to "
-                                         f"read in line {i}: \"{line}\"")
-                    exps[cur_exp_conf].append(exp)
-    return exps, setup
-
-
-def combine(exps1: Optional[Dict[ExpConfig, List[Exp]]],
-            setup1: Optional[Setup],
-            exps2: Optional[Dict[ExpConfig, List[Exp]]],
-            setup2: Optional[Setup]) \
-            -> Tuple[Optional[Dict[ExpConfig, List[Exp]]], Optional[Setup]]:
-    # combine the experiments
-    exps_comb = None
-    if (exps1 is not None and exps2 is not None):
-        exps_comb_d = defaultdict(list)
-        for key in sorted(set().union(exps1.keys(), exps2.keys())):
-            exps_comb_d[key].extend(exps1.get(key, []))
-            exps_comb_d[key].extend(exps2.get(key, []))
-        exps_comb = dict(exps_comb_d)
-    elif (exps1 is not None):
-        exps_comb = exps1
-    elif (exps2 is not None):
-        exps_comb = exps2
-    setup_comb = None
-    if (setup1 is not None and setup2 is not None):  # combine the setups
-        vals = list()
-        for i in range(len(setup1)):
-            cur_vals: List[int] = sorted(set().union(setup1[i], setup2[i]))
-            vals.append(cur_vals)
-        setup_comb = Setup(*vals)
-    elif (setup1 is not None):
-        setup_comb = setup1
-    elif (setup2 is not None):
-        setup_comb = setup2
-    return exps_comb, setup_comb
-
-
-def steimann(tie_size: int, num_faults: int, target: int) -> Fraction:
-    return target * Fraction(tie_size-num_faults, num_faults+1)
-
-
-def comp_steimann(exp_config: ExpConfig, exp: Exp):
-    """ compute steimann """
-    num_faulty = len(set().union(*exp.faults.values()))
-    steimann_start = time.time()
-    steimann_val = float(steimann(exp_config.m, num_faulty,
-                                  exp_config.q))
-    steimann_end = time.time()
-    s_dur = steimann_end - steimann_start
-    steimann_time = timedelta(seconds=s_dur)
-    return steimann_val, steimann_time
-
-
-def comp_sample_100(config: ExpConfig, exp: Exp, calc: Calc,
-                    bu_model: BUModel):
-    elems = set(range(1, config.m+1))
-    start_100 = time.time()
-    val_100 = exact_method(exp.faults, config.q, elems=elems, calc=calc,
-                           bu=bu_model, samples=100)
-    end_100 = time.time()
-    time_100 = timedelta(seconds=(end_100 - start_100))
-    return val_100, time_100
+def compute(config: ExpConfig, exp: Exp, calc: Calc, bu: BUModel,
+            func: Callable[[ExpConfig, Exp, Calc, BUModel], float]) \
+                    -> Tuple[float, timedelta]:
+    start_time = time.time()
+    result = func(config, exp, calc, bu)
+    end_time = time.time()
+    time_diff = timedelta(seconds=(end_time - start_time))
+    return result, time_diff
 
 
 def time_diff(t1: timedelta, t2: timedelta, perc=True) -> float:
@@ -239,97 +48,219 @@ def val_diff(v1, v2, perc=True):
         return abs(v1 - v2)*100/v2
 
 
-def cut_off(input_, bu_model: BUModel, output: TextIO = sys.stdout):
+def _best_case_w(config: ExpConfig, exp: Exp) -> float:
+    return 0.0
+
+
+def _worst_case_w(config: ExpConfig, exp: Exp) -> float:
+    """worst case -> look at all non-faulty elements first"""
+    num_fault_locs = len(exp.faults)
+    return config.m - num_fault_locs
+
+
+def _avg_case_w(config: ExpConfig, exp: Exp) -> float:
+    """average case -> look at half the non-faulty elements first"""
+    return (_worst_case_w(config, exp))/2
+
+
+def _best_worst_faults(faults, k: int, bu: BUModel, rev=True) -> float:
+    """
+    Compute how many faults are found when inspecting only faulty locations.
+    When `rev` is true, inspect elements with the most faults first,
+    otherwise inspect elements with the most faults last.
+    """
+    # inspect the elements with the most faults first/last
+    flts_by_loc = [fs for fs in faults.values()]
+    flts_by_loc = sorted(flts_by_loc, key=lambda x: len(x), reverse=rev)
+    # count how many times each fault is found in the first k elements
+    counts = Counter(chain.from_iterable(flts_by_loc[:k]))
+    # compare to num locs needed to identify each fault
+    expected = bu.get_dict(faults, by_loc=True)
+    num_found = 0
+    for fault in counts.keys():
+        if (counts[fault] >= expected[fault]):
+            num_found += 1
+    return num_found
+
+
+def _best_case_r(config: ExpConfig, exp: Exp, bu: BUModel) -> float:
+    """ Recall at the k-th element in the tie using best case strategy. """
+    return _best_worst_faults(exp.faults, config.q, bu, rev=True)
+
+
+def _worst_case_r(config: ExpConfig, exp: Exp, bu: BUModel) -> float:
+    num_non_faults = config.m - len(exp.faults)
+    # inspect non-faulty elements first
+    k = max(config.q - num_non_faults, 0)
+    # short-cut if you've already exhausted your budget
+    if (k <= 0):
+        return 0.0
+    # use the rest of the budget (k) to inspect faulty locations
+    return _best_worst_faults(exp.faults, k, bu, rev=False)
+
+
+def _avg_case_r(config: ExpConfig, exp: Exp, bu: BUModel) -> float:
+    return (_best_case_r(config, exp, bu) + _worst_case_r(config, exp, bu))/2
+
+
+def best(config: ExpConfig, exp: Exp, calc: Calc, bu: BUModel):
+    if (calc in [Calc.WEFFORT, Calc.EXAM]):
+        return _best_case_w(config, exp)
+    else:
+        return _best_case_r(config, exp, bu)
+
+
+def worst(config: ExpConfig, exp: Exp, calc: Calc, bu: BUModel):
+    if (calc in [Calc.WEFFORT, Calc.EXAM]):
+        return _worst_case_w(config, exp)
+    else:
+        return _worst_case_r(config, exp, bu)
+
+
+def avrg(config: ExpConfig, exp: Exp, calc: Calc, bu: BUModel):
+    if (calc in [Calc.WEFFORT, Calc.EXAM]):
+        return _avg_case_w(config, exp)
+    else:
+        return _avg_case_r(config, exp, bu)
+
+
+def stmn(config: ExpConfig, exp: Exp, calc: Calc, bu: BUModel):
+    n = config.m
+    m = config.f
+    k = config.q
+    return (k * (n-m))/(m+1)
+
+
+def sampled(config: ExpConfig, exp: Exp, calc: Calc, bu_model: BUModel,
+            samples=100):
+    elems = set(range(1, config.m+1))
+    return exact_method(exp.faults, config.q, elems=elems, calc=calc,
+                        bu=bu_model, samples=samples)
+
+
+type_funcs: Dict[Type, Callable[[ExpConfig, Exp, Calc, BUModel], float]] = {
+        Type.STMN: stmn, Type.PART: sampled, Type.BEST: best, Type.WRST: worst,
+        Type.AVRG: avrg}
+
+
+def incl_config(config: ExpConfig, restrictions: Dict[str, List[int]]) -> bool:
+    for r, rng in restrictions.items():
+        if (getattr(config, r) not in rng):
+            return False
+    return True
+
+
+def get_raw_results(input_dir: str, restrictions: Dict[str, List[int]],
+                    calcs: List[Calc] = None) -> RawResults:
+    if (calcs is None):
+        calcs = [Calc.WEFFORT, Calc.RECALL]
+    raw_results: RawResults = rec_dd()
+    for bu_model in BUModel.get_types():
+        for calc in calcs:
+            fname = f"exp_{calc_names[calc][1]}_{str(bu_model).lower()}.txt"
+            path = osp.join(input_dir, fname)
+            raw_results[bu_model][calc] = \
+                get_category_results(path, bu_model, calc, restrictions)
+    return raw_results
+
+
+def get_category_results(input_: str, bu_model: BUModel, calc: Calc,
+                         restrictions: Dict[str, List[int]]) \
+                                 -> Dict[Type, RawData]:
     exps_orig, _ = read_exp_file(input_)
+    ret = {}
+    results: Dict[Type, List[float]] = {}
+    runtimes: Dict[Type, List[float]] = {}
     for config in exps_orig:
-        q = config.q
+        if (not incl_config(config, restrictions)):
+            continue
         for exp in exps_orig[config]:
-            val_100, time_100 = comp_sample_100(config, exp, Calc.PRECISION,
-                                                bu_model)
-            print(exp.expect_val*q, exp.formula_val*q,
-                  val_diff(exp.formula_val*q, exp.expect_val*q),
-                  val_diff(exp.formula_val*q, exp.expect_val*q, False),
-                  val_100*q, val_diff(val_100*q, exp.expect_val*q),
-                  val_diff(val_100*q, exp.expect_val*q, False),
-                  exp.expect_time.total_seconds(),
-                  exp.formula_time.total_seconds(),
-                  time_diff(exp.formula_time, exp.expect_time),
-                  time_diff(exp.formula_time, exp.expect_time, False),
-                  time_100.total_seconds(),
-                  time_diff(time_100, exp.expect_time),
-                  time_diff(time_100, exp.expect_time, False))
+            for type_ in types[calc]:
+                if (type_ is Type.FULL):
+                    result, time = exp.expect_val, exp.expect_time
+                elif (type_ is Type.BASE):
+                    result, time = exp.formula_val, exp.formula_time
+                else:
+                    result, time = compute(config, exp, calc, bu_model,
+                                           type_funcs[type_])
+                results.setdefault(type_, []).append(result)
+                runtimes.setdefault(type_, []).append(time.total_seconds())
+    for type_ in types[calc]:
+        ret[type_] = RawData(str(bu_model), calc, type_,
+                             np.asarray(results[type_]),
+                             np.asarray(runtimes[type_]))
+    return ret
 
 
-def effort(input_, bu_model: BUModel, output: TextIO = sys.stdout):
-    exps_orig, _ = read_exp_file(input_)
-    for config in exps_orig:
-        # if (config.l != 1 or config.o != 0):
-        #     continue
-        for exp in exps_orig[config]:
-            val_100, time_100 = comp_sample_100(config, exp, Calc.WEFFORT,
-                                                bu_model)
-            val_steimann, time_steimann = comp_steimann(config, exp)
-            print(exp.expect_val,
-                  exp.formula_val, val_diff(exp.formula_val, exp.expect_val),
-                  val_100, val_diff(val_100, exp.expect_val),
-                  val_steimann, val_diff(val_steimann, exp.expect_val),
-                  exp.expect_time.total_seconds(),
-                  exp.formula_time.total_seconds(),
-                  time_diff(exp.formula_time, exp.expect_time),
-                  time_100.total_seconds(),
-                  time_diff(time_100, exp.expect_time),
-                  time_steimann.total_seconds(),
-                  time_diff(time_steimann, exp.expect_time))
-
-
-def type_file(input_: str) -> str:
-    if (osp.isfile(input_)):
+def type_dir(input_: str) -> str:
+    if (osp.isdir(input_)):
         return input_
     else:
-        raise argparse.ArgumentTypeError(f"can't open {input_}: No such file "
-                                         "or directory.")
+        raise ArgumentTypeError(f"can't open {input_}: No such file "
+                                "or directory.")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('input', type=type_file)
-    calc_choices = [Calc.WEFFORT, Calc.PRECISION]
-    parser.add_argument('-c', '--calculation', choices=calc_choices,
-                        type=Calc.from_string, default=Calc.WEFFORT,
-                        help='Specifies the calculation to perform (default '
-                        'Wasted Effort)', required=True)
-    parser.add_argument('-x', '--bug-understanding-model',
-                        choices=BUModel.get_types(), type=BUModel.from_string,
-                        help='The bug understanding model to use. Note: the '
-                        'default imperfect strategy is l/2.',
-                        default=BUModel.PERFECT, required=True)
-    parser.add_argument('-o', '--output-file', type=argparse.FileType('r'),
-                        help='Specify the output file to print the results to')
+    parser = ArgumentParser()
+    parser.add_argument('input_dir', type=type_dir)
+    parser.add_argument('-m', action='store', default=None, type=intRange,
+                        help='The number of elements in the tie')
+    parser.add_argument('-f', action='store', default=None, type=intRange,
+                        help='The number of faults in the tie')
+    parser.add_argument('-l', '--l-max', action='store', default=None,
+                        type=intRange, help='The maximum number of locations '
+                        'per fault in the tie', dest='l')
+    parser.add_argument('-q', action='store', default=None, type=intRange,
+                        help='The inspection cut-off point.')
+    parser.add_argument('-o', '--overlap', action='store', type=intRange,
+                        help='The total number of overlapping '
+                        'elements allowed.', dest='o')
+    parser.add_argument('-c', '--calculation', choices=[Calc.WEFFORT, Calc.RECALL],
+                        type=Calc.from_string, default=None,
+                        help='Only include results from the given calculation')
+    # calc_choices = [Calc.WEFFORT, Calc.PRECISION]
+    # parser.add_argument('-c', '--calculation', choices=calc_choices,
+    #                     type=Calc.from_string, default=Calc.WEFFORT,
+    #                     help='Specifies the calculation to perform (default '
+    #                     'Wasted Effort)', required=True)
+    # parser.add_argument('-x', '--bug-understanding-model',
+    #                     choices=BUModel.get_types(), type=BUModel.from_string,
+    #                     help='The bug understanding model to use. Note: the '
+    #                     'default imperfect strategy is l/2.',
+    #                     default=BUModel.PERFECT, required=True)
+    # parser.add_argument('-o', '--output-file', type=argparse.FileType('r'),
+    #                     help='Specify the output file to print the results to')
     args = parser.parse_args()
-    if (args.calculation in [Calc.WEFFORT, Calc.EXAM]):
-        effort(args.input, args.bug_understanding_model,
-               output=args.output_file)
-    elif (args.calculation in [Calc.PRECISION, Calc.RECALL]):
-        cut_off(args.input, args.bug_understanding_model,
-                output=args.output_file)
-    # exps, setup = None, None
-    # for arg in sys.argv[1:]:
-    #     exps, setup = combine(exps, setup, *read_exp_file(arg))
+    restrictions = {}
+    for restr in ['m', 'f', 'l', 'q', 'o']:
+        if (hasattr(args, restr) and getattr(args, restr) is not None):
+            restrictions[restr] = getattr(args, restr)
+    if (args.calculation is None):
+        calcs = [Calc.WEFFORT, Calc.RECALL]
+    else:
+        calcs = [args.calculation]
+    print(f"Restrictions: {restrictions}")
+    raw_results = get_raw_results(args.input_dir, restrictions,
+                                  calcs=calcs)
 
-    # # print(setup)
-    # if (exps is not None):
-    #     for exp_config in exps:
-    #         # print(exp_config)
-    #         for exp in exps[exp_config]:
-    #             # print(exp)
-    #             print(exp.expect_val, exp.expect_time.total_seconds())
-    #             if (exp.expect_val == 0 and exp.formula_val == 0):
-    #                 print(0.0, time_diff(exp.formula_time, exp.expect_time))
-    #             else:
-    #                 print(abs(exp.expect_val -
-    #                           exp.formula_val)*100/exp.formula_val,
-    #                       time_diff(exp.formula_time, exp.expect_time))
-    #             # print(exp.expect_time - exp.formula_time,
-    #             #       exp.expect_time - steimann_time)
-    #             # print(exp.expect_val, exp.formula_val,
-    #             #       steimann_val, sep='\t')
+    # code to get the max difference of a particular technique
+    # t = raw_results[BUModel.INEPT][Calc.RECALL]
+    # diffs = diff(t[Type.FULL].result, t[Type.BASE].result)
+    # zp = zip(diffs, t[Type.BASE].result, t[Type.FULL].result)
+    # print(sorted(zp, key=lambda x: x[0], reverse=True)[:10])
+
+    # produce table for the run-times
+    for calc in [Calc.WEFFORT, Calc.RECALL]:
+        printed_header = False
+        for bu_model in BUModel.get_types():
+            cur = raw_results[bu_model][calc]
+            sort_types = sorted(cur.keys(), key=lambda t: type_order.index(t))
+            if (not printed_header):
+                print('', *[typ_names[t] for t in sort_types], sep=' & ',
+                      end='\\\\\n')
+                printed_header = True
+            print(str(bu_model).capitalize(), *[f'{np.mean(cur[t].runtime):.4f}'
+                  for t in sort_types], sep=' & ', end='\\\\\n')
+
+    # plot the violin plots
+    plot_violins(raw_results, BUModel.get_types(), calcs)

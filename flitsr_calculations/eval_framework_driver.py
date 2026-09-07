@@ -1,8 +1,9 @@
 # PYTHON_ARGCOMPLETE_OK
-from argparse import ArgumentParser, ArgumentTypeError, ArgumentError
+from multiprocessing import Pool
+from argparse import ArgumentParser
 from numpy import random
 from typing import Set, Dict, List, Optional, Collection, Tuple, Union, \
-        overload, Iterable
+        overload
 from math import comb, isclose
 from flitsr.tie import Ties, Tie
 from flitsr.calculations.perms import exact_method, type_faults, \
@@ -12,14 +13,13 @@ from flitsr.calculations.exp_values import effort_exp_val_tie, \
 from flitsr.ranking import Ranking, Rankings
 from flitsr.spectrum import Spectrum
 from flitsr.calculations import BUModel
-from itertools import combinations, chain, product
+from itertools import combinations
 from functools import partial
-from calc_experiments import Setup, read_exp_file, combine
+from experiment_helper import Setup, read_exp_file, combine, Exp, intRange
 from collections import Counter
 from datetime import timedelta
 import sys
 import os
-import re
 import time
 
 
@@ -63,18 +63,20 @@ def get_flitsr_func(calc: Calc):
         return partial(effort_exp_val_tie, weffort=True)
     elif (calc is Calc.EXAM):
         return partial(effort_exp_val_tie, weffort=False)
-    elif (calc is Calc.PRECISION):
-        def prec(tie: Tie, p: int, collapse: bool):
-            return cut_off_exp_val_tie(tie, p, collapse)/p
-        return prec
-    elif (calc is Calc.RECALL):
-        def rec(tie: Tie, p: int, collapse: bool):
-            return cut_off_exp_val_tie(tie, p, collapse)/tie.num_faults()
-        return rec
+    elif (calc is Calc.PRECISION or calc is Calc.RECALL):
+        return cut_off_exp_val_tie
+    # elif (calc is Calc.PRECISION):
+    #     def prec(tie: Tie, p: int, collapse: bool):
+    #         return cut_off_exp_val_tie(tie, p, collapse)/p
+    #     return prec
+    # elif (calc is Calc.RECALL):
+    #     def rec(tie: Tie, p: int, collapse: bool):
+    #         return cut_off_exp_val_tie(tie, p, collapse)/tie.num_faults()
+    #     return rec
 
 
 def experiment(m: int, f: int, l_max: int, o: int, q: int, calc: Calc,
-               x: BUModel, fs: Optional[Dict[int, Set[int]]] = None):
+               x: BUModel, fs: Optional[Dict[int, Set[int]]] = None) -> Exp:
     """
     Runs an experiment with the given parameters.
 
@@ -94,8 +96,9 @@ def experiment(m: int, f: int, l_max: int, o: int, q: int, calc: Calc,
     # create the elements
     elems = set(range(1, m+1))
 
-    # restrict q
-    q = min(f, q)
+    # restrict q if effort-based
+    if (calc in [Calc.WEFFORT, Calc.EXAM]):
+        q = min(f, q)
 
     # sample the fault locations
     if (fs is None):
@@ -129,15 +132,22 @@ def experiment(m: int, f: int, l_max: int, o: int, q: int, calc: Calc,
             o_elem = rng.choice(list(elems.difference(selected)))
             selected.add(o_elem)
             fs.setdefault(int(o_elem), set()).update([int(o) for o in ovlp])
+    # run exact solution
     e_start = time.time()
     exact = exact_method(fs, q, elems, calc=calc, bu=x)
     e_end = time.time()
+    # run formula solution
     tie = construct_tie(elems, fs, x)
     func = get_flitsr_func(calc)
     f_start = time.time()
     formula = func(tie, q, collapse=False)
     f_end = time.time()
-    return exact, formula, fs, (e_end-e_start), (f_end-f_start)
+    # collect results
+    ft = timedelta(seconds=(f_end-f_start))
+    et = timedelta(seconds=(e_end-e_start))
+    result = isclose(exact, formula, rel_tol=5e-2, abs_tol=1e-4)
+    exp = Exp(result, formula, exact, ft, et, fs)
+    return exp
 
 
 def mfault_mloc_prob(fs: Dict[int, Set[int]], k: int, p: int):
@@ -173,26 +183,6 @@ def construct_tie(elems: Collection[int], fs: Dict[int, Set[int]],
     rs = Rankings(faults, spec_elems, [r])
     ts = Ties(rs, x)
     return ts[0]
-
-
-def intRange(inp: str):
-    if (inp.isdigit()):
-        return [int(inp)]
-    rng_str = "\\[\\s*(\\d+)\\s*(?:,\\s*(\\d+)\\s*(?:,\\s*(\\d+)\\s*)?)?\\]"
-    m = re.fullmatch(f"(?:{rng_str})+", inp)
-    if (not m):
-        raise ArgumentTypeError("Please provide a list of ranges in the form: "
-                                "\"\\[<start>,[<stop>[,<step>]]\\]\"")
-    rngs: List[Iterable] = []
-    for m in re.finditer(rng_str, inp):
-        if (m.group(3)):
-            rngs.append(range(int(m.group(1)), int(m.group(2)),
-                              int(m.group(3))))
-        elif (m.group(2)):
-            rngs.append(range(int(m.group(1)), int(m.group(2))))
-        else:
-            rngs.append([int(m.group(1))])
-    return list(chain(*rngs))
 
 
 def sfdiv(n, d):
@@ -240,18 +230,14 @@ def exp_iter(args):
             for exp in exps[expConfig]:
                 print(exp, file=out)
         try:
-            for i in range(iters):
-                exact, formula, fs, e_dur, \
-                        f_dur = experiment(m, f, l, o, q, args.calculation,
-                                           x=x, fs=args.faults)
-                ft = timedelta(seconds=f_dur)
-                et = timedelta(seconds=e_dur)
-                if (not isclose(exact, formula, rel_tol=5e-2, abs_tol=1e-4)):
-                    print(f'FAILED {formula} != {exact} [{ft};{et}] ({fs})',
-                          file=out)
-                else:
-                    print(f'Passed {formula} = {exact} [{ft};{et}] ({fs})',
-                          file=out)
+            def callback(exp_res): print(exp_res, file=out)
+            e_args = [m, f, l, o, q, args.calculation, x, args.faults]
+            with Pool(processes=args.num_cpus, maxtasksperchild=1) as pool:
+                for i in range(iters):
+                    pool.apply_async(experiment, args=e_args,
+                                     callback=callback)
+                pool.close()
+                pool.join()
         except ValueError as e:
             print(f'Skipping invalid configuration ({e})...', file=out)
 
@@ -290,6 +276,9 @@ if __name__ == "__main__":
                         'Wasted Effort)')
     parser.add_argument('-p', '--output-file', default=None, action='store',
                         help='Print to the given file (default stdout).')
+    parser.add_argument('-n', '--num-cpus', default=1, action='store',
+                        type=int, help='The number of processes to spawn when '
+                        'running the experiments')
     args = parser.parse_args()
     # check if something to run
     if ((args.output_file is None or not os.path.isfile(args.output_file) or

@@ -20,7 +20,8 @@ classifiers = [
   "Intended Audience :: Developers",
 ]
 dependencies = [
-  'flitsr >= 2.5.0'
+  'flitsr >= 2.5.0',
+  'seaborn'
 ]
 
 [project.urls]
