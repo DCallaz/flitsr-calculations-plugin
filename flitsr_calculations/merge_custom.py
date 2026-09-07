@@ -1,8 +1,10 @@
+import re
 from flitsr.merge import Merge  # type:ignore
 from flitsr.calculations.perms import Calc
 from argparse import ArgumentParser, FileType
 from itertools import chain, zip_longest, product
-from typing import Dict, List, Tuple, Collection
+from functools import partial
+from typing import Dict, List, Tuple, Collection, Optional
 from numpy import mean, std as stdev
 import numpy as np
 from matplotlib import pyplot as plt
@@ -14,8 +16,10 @@ from scipy.stats import shapiro, anderson
 from dataclasses import dataclass
 
 
-def rec_dd():
-    return defaultdict(rec_dd)
+def rec_dd(n: Optional[int] = None):
+    if (n == 1):
+        return dict()
+    return defaultdict(partial(rec_dd, None if n is None else (n-1)))
 
 
 class Type(StrEnum):
@@ -69,7 +73,7 @@ typ_names = {Type.FULL: 'Enum. (10!)', Type.BASE: 'Framework',
              Type.AVRG: 'Average case'}
 type_order = [Type.FULL, Type.BASE, Type.PART, Type.BEST, Type.WRST, Type.AVRG,
               Type.STMN]
-calc_names = {Calc.WEFFORT: ('effort', 'effort'),
+calc_names = {Calc.WEFFORT: ('wasted effort', 'effort'),
               Calc.RECALL: ('recall', 'cutoff')}
 
 
@@ -149,16 +153,23 @@ def get_raw_results(merge: Merge, metrics: Collection[str], modes: Collection[st
     calculation.
     """
 
-    raw_results: RawResults = rec_dd()
+    raw_results: RawResults = rec_dd(3)
 
     # Compress lists of numbers for each stopping point into one (raw) list
     for metric, mode, calc in product(metrics, modes, calcs):
         avgs = merge.avgs[mode][metric]
+        calcs = list(avgs.keys())
         for type_ in types[calc]:  # FULL, BASE, PART, (STMN)
+            r = re.compile(re.escape(name(type_, calc, "<rpl>"))
+                             .replace("<rpl>", "([0-9]+)"))
+            matches = filter(None, map(r.match, calcs))
+            nums = [m.group(1) for m in matches]
+            if (len(nums) == 0):
+                continue
             rs: Dict[str, np.ndarray] = {}
             for measure in Measure:  # RESULT, RUNTIME
                 chn = chain(*(avgs[name(type_, calc, i, measure)].all
-                              for i in nums[calc]))
+                              for i in nums))
                 rs[measure] = np.asarray(list(chn))
             rd = RawData(metric, calc, type_, **rs)
             raw_results[metric][calc][type_] = rd

@@ -17,7 +17,7 @@ from flitsr.calculations.precision_recall import stop_type, _get_n, \
 
 # <--------------------------- Steiman calculations -------------------------->
 
-@calculation(partial(nth_print_name, name='steimann effort'),
+@calculation(partial(nth_print_name, name='steimann wasted effort'),
              "Display the (steimann) wasted effort to the Nth fault",
              "steimann", "steimann-wasted-effort")
 @parameter('n', type=check_fault_type)
@@ -33,7 +33,7 @@ def _steimann(tie: Tie, k: int, weffort: bool, collapse=False) -> float:
     return (k * (n-m))/(m+1)
 
 
-@calculation(partial(nth_print_name, name='steimann effort runtime'),
+@calculation(partial(nth_print_name, name='steimann wasted effort runtime'),
              "Display the runtime for (steimann) wasted effort to the Nth "
              "fault", "steimann-time")
 @parameter('n', type=check_fault_type)
@@ -43,7 +43,7 @@ def steimann_rt(ties: Ties, collapse: bool, n: int) -> float:
 
 # <------------------------- Framework calculations ------------------------->
 
-@calculation(partial(nth_print_name, name='effort runtime'),
+@calculation(partial(nth_print_name, name='wasted effort runtime'),
              "Display the runtime for calculating the wasted effort to the "
              "Nth fault", "weffort-time")
 @parameter('n', type=check_fault_type)
@@ -53,7 +53,7 @@ def weffort_rt(ties: Ties, collapse: bool, n: int) -> float:
 
 # <-------------------------- Sampled calculations -------------------------->
 
-@calculation(partial(nth_print_name, name='full sampled effort'),
+@calculation(partial(nth_print_name, name='full sampled wasted effort'),
              "Display the (full sampled) wasted effort to the Nth fault",
              "f-sampled", "full-sampled-wasted-effort")
 @parameter('n', type=check_fault_type)
@@ -68,7 +68,7 @@ def nth_sampled_print_name(name: str, ties: Ties, collapse: bool, n: int,
     return f"{samples} {name} ({n})"
 
 
-@calculation(partial(nth_sampled_print_name, name='partial sampled effort'),
+@calculation(partial(nth_sampled_print_name, name='partial sampled wasted effort'),
              "Display the (partial sampled) wasted effort to the Nth fault",
              "p-sampled", "partial-sampled-wasted-effort")
 @parameter('n', type=check_fault_type)
@@ -87,7 +87,7 @@ def _sampled(tie: Tie, k: int, weffort: bool, collapse=False,
                         bu=tie.fault_identify_nums(collapse), samples=samples)
 
 
-@calculation(partial(nth_print_name, name='full sampled effort runtime'),
+@calculation(partial(nth_print_name, name='full sampled wasted effort runtime'),
              "Display the runtime for (full sampled) wasted effort to the Nth "
              "fault", "full-sampled-effort-time")
 @parameter('n', type=check_fault_type)
@@ -95,7 +95,7 @@ def full_sampled_rt(ties: Ties, collapse: bool, n: int) -> float:
     return get_runtime('full_sampled_effort', {'n': n})
 
 
-@calculation(partial(nth_sampled_print_name, name='partial sampled effort runtime'),
+@calculation(partial(nth_sampled_print_name, name='partial sampled wasted effort runtime'),
              "Display the runtime for (partial sampled) wasted effort to the "
              "Nth fault", "partial-sampled-effort-time")
 @parameter('n', type=check_fault_type)
@@ -132,7 +132,7 @@ def _avg_case_w(tie: Tie, k: int, weffort: bool, collapse=False) -> float:
             _worst_case_w(tie, k, weffort, collapse))/2
 
 
-@calculation(partial(nth_print_name, name='best case effort'),
+@calculation(partial(nth_print_name, name='best case wasted effort'),
              "Display the wasted effort to the Nth fault using best case tie "
              "resolution", "best-case-effort")
 @parameter('n', type=check_fault_type)
@@ -142,7 +142,7 @@ def best_case_weffort(ties: Ties, collapse: bool, n: int) -> float:
                           collapse=collapse, tie_exp_func=_best_case_w)
 
 
-@calculation(partial(nth_print_name, name='worst case effort'),
+@calculation(partial(nth_print_name, name='worst case wasted effort'),
              "Display the wasted effort to the Nth fault using worst case tie "
              "resolution", "worst-case-effort")
 @parameter('n', type=check_fault_type)
@@ -152,7 +152,7 @@ def worst_case_weffort(ties: Ties, collapse: bool, n: int) -> float:
                           collapse=collapse, tie_exp_func=_worst_case_w)
 
 
-@calculation(partial(nth_print_name, name='average case effort'),
+@calculation(partial(nth_print_name, name='average case wasted effort'),
              "Display the wasted effort to the Nth fault using average case "
              "tie resolution", "avg-case-effort")
 @parameter('n', type=check_fault_type)
@@ -162,7 +162,7 @@ def avg_case_weffort(ties: Ties, collapse: bool, n: int) -> float:
                           collapse=collapse, tie_exp_func=_avg_case_w)
 
 
-@calculation(partial(nth_print_name, name='best case effort runtime'),
+@calculation(partial(nth_print_name, name='best case wasted effort runtime'),
              "Display the runtime for (best case) wasted effort to the Nth "
              "fault", "best-case-effort-time")
 @parameter('n', type=check_fault_type)
@@ -170,7 +170,7 @@ def best_case_effort_rt(ties: Ties, collapse: bool, n: int) -> float:
     return get_runtime('best_case_weffort', {'n': n})
 
 
-@calculation(partial(nth_print_name, name='worst case effort runtime'),
+@calculation(partial(nth_print_name, name='worst case wasted effort runtime'),
              "Display the runtime for (worst case) wasted effort to the Nth "
              "fault", "worst-case-effort-time")
 @parameter('n', type=check_fault_type)
@@ -178,7 +178,7 @@ def worst_case_effort_rt(ties: Ties, collapse: bool, n: int) -> float:
     return get_runtime('worst_case_weffort', {'n': n})
 
 
-@calculation(partial(nth_print_name, name='average case effort runtime'),
+@calculation(partial(nth_print_name, name='average case wasted effort runtime'),
              "Display the runtime for (average case) wasted effort to the Nth "
              "fault", "avg-case-effort-time")
 @parameter('n', type=check_fault_type)
