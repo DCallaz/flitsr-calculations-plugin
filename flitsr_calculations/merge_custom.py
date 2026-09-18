@@ -11,6 +11,7 @@ import numpy as np
 import seaborn as sns
 from flitsr.calculations.perms import Calc
 from flitsr.merge import Merge  # type:ignore
+from flitsr.suspicious import Suspicious
 from matplotlib import pyplot as plt
 from matplotlib.ticker import FuncFormatter
 
@@ -258,12 +259,19 @@ if __name__ == "__main__":
     parser.add_argument('-r', '--recurse', action='store_true')
     parser.add_argument('-o', '--output-file', action='store',
                         type=FileType('w'))
+    parser.add_argument('-m', '--metrics', action='extend', nargs='+',
+                        help='Specify the metrics to merge results for, may '
+                        'be specified multiple times.')
     args = parser.parse_args()
 
     # merge results
     merge = Merge()
     merge.read_results(args.recurse)
-    metrics = sorted(merge.metrics)
+    if (hasattr(args, "metrics") and args.metrics is not None
+            and len(args.metrics) > 0):
+        metrics = [m for m in args.metrics if m in merge.metrics]
+    else:
+        metrics = sorted(merge.metrics)
     modes = sorted(merge.modes)
 
     all_calcs: List[Calc] = [Calc.WEFFORT, Calc.RECALL]
@@ -278,7 +286,8 @@ if __name__ == "__main__":
                    TieInfo.TS: '$\\obar{n}$', TieInfo.NT: '$\\# s$'}
 
     print('', *tieinfo_out.values(), sep=' & ', end='\\\\\n')
-    for metric, mode in product(metrics, modes):
+    mode = 'base'
+    for metric in metrics:
         avgs = merge.avgs[mode][metric]
         print(metric.capitalize(), *[f'{avgs[ti].eval():.2f}' for ti in TieInfo],
               sep=' & ', end='\\\\\n')
