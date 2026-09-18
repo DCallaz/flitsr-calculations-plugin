@@ -2,6 +2,7 @@ from datetime import timedelta
 from argparse import ArgumentParser, ArgumentTypeError
 from os import path as osp
 import time
+import json
 from typing import Dict, List, Tuple, Callable
 from itertools import chain
 from collections import Counter
@@ -11,8 +12,10 @@ from flitsr.calculations import BUModel
 from flitsr.spectrum import Spectrum
 from flitsr.tie import Tie, _CollapsableFault
 from flitsr_calculations.merge_custom import Type, types, RawResults, \
-        RawData, rec_dd, plot_violins, calc_names, type_order, typ_names
-from experiment_helper import ExpConfig, Exp, read_exp_file, intRange
+        RawData, rec_dd, results_outputs, calc_names
+from flitsr_calculations.experiment_helper import ExpConfig, Exp, \
+        read_exp_file, intRange
+
 # from matplotlib import pyplot as plt
 
 
@@ -159,7 +162,7 @@ def get_raw_results(input_dir: str, restrictions: Dict[str, List[int]],
         for calc in calcs:
             fname = f"exp_{calc_names[calc][1]}_{str(bu_model).lower()}.txt"
             path = osp.join(input_dir, fname)
-            raw_results[bu_model][calc] = \
+            raw_results[str(bu_model)][calc] = \
                 get_category_results(path, bu_model, calc, restrictions)
     return raw_results
 
@@ -200,9 +203,42 @@ def type_dir(input_: str) -> str:
                                 "or directory.")
 
 
+def print_raw_results(raw_results: RawResults, out_file: str):
+    def serialize(raw_results: RawResults):
+        ser_results = {}
+        for category in raw_results:
+            ser_results[category] = {}
+            for calc in raw_results[category]:
+                ser_results[category][calc] = {}
+                for type_ in raw_results[category][calc]:
+                    rd = raw_results[category][calc][type_]
+                    ser_results[category][calc][type_] = rd.serialize()
+        return ser_results
+
+    with open(out_file, 'w') as fp:
+        json.dump(serialize(raw_results), fp, indent=2)
+
+
+def read_raw_results(input_file: str):
+    def deserialize(dict_: Dict):
+        if ('category' in dict_):
+            return RawData.deserialize(dict_)
+        else:
+            return dict_
+
+    with open(input_file, 'r') as fp:
+        return json.load(fp, object_hook=deserialize)
+
+
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument('input_dir', type=type_dir)
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument('-d', '--dir-input', type=type_dir, metavar='DIR',
+                             help='Compute results for the evaluation '
+                             'settings stored in the given directory')
+    input_group.add_argument('-r', '--results-input', action='store',
+                             metavar='JSON_FILE', help='Re-use the computed '
+                             'results from the given JSON file')
     parser.add_argument('-m', action='store', default=None, type=intRange,
                         help='The number of elements in the tie')
     parser.add_argument('-f', action='store', default=None, type=intRange,
@@ -218,6 +254,8 @@ if __name__ == "__main__":
     parser.add_argument('-c', '--calculation', choices=[Calc.WEFFORT, Calc.RECALL],
                         type=Calc.from_string, default=None,
                         help='Only include results from the given calculation')
+    parser.add_argument('-O', '--output-file', action='store',
+                        help='The name of the file to save the raw results to')
     # calc_choices = [Calc.WEFFORT, Calc.PRECISION]
     # parser.add_argument('-c', '--calculation', choices=calc_choices,
     #                     type=Calc.from_string, default=Calc.WEFFORT,
@@ -231,36 +269,22 @@ if __name__ == "__main__":
     # parser.add_argument('-o', '--output-file', type=argparse.FileType('r'),
     #                     help='Specify the output file to print the results to')
     args = parser.parse_args()
-    restrictions = {}
-    for restr in ['m', 'f', 'l', 'q', 'o']:
-        if (hasattr(args, restr) and getattr(args, restr) is not None):
-            restrictions[restr] = getattr(args, restr)
     if (args.calculation is None):
         calcs = [Calc.WEFFORT, Calc.RECALL]
     else:
         calcs = [args.calculation]
-    print(f"Restrictions: {restrictions}")
-    raw_results = get_raw_results(args.input_dir, restrictions,
-                                  calcs=calcs)
+    if (args.dir_input):
+        restrictions = {}
+        for restr in ['m', 'f', 'l', 'q', 'o']:
+            if (hasattr(args, restr) and getattr(args, restr) is not None):
+                restrictions[restr] = getattr(args, restr)
+        print(f"Restrictions: {restrictions}")
+        raw_results = get_raw_results(args.dir_input, restrictions,
+                                      calcs=calcs)
+        if (args.output_file):
+            print_raw_results(raw_results, args.output_file)
+    else:
+        raw_results = read_raw_results(args.results_input)
 
-    # code to get the max difference of a particular technique
-    # t = raw_results[BUModel.INEPT][Calc.RECALL]
-    # diffs = diff(t[Type.FULL].result, t[Type.BASE].result)
-    # zp = zip(diffs, t[Type.BASE].result, t[Type.FULL].result)
-    # print(sorted(zp, key=lambda x: x[0], reverse=True)[:10])
-
-    # produce table for the run-times
-    for calc in [Calc.WEFFORT, Calc.RECALL]:
-        printed_header = False
-        for bu_model in BUModel.get_types():
-            cur = raw_results[bu_model][calc]
-            sort_types = sorted(cur.keys(), key=lambda t: type_order.index(t))
-            if (not printed_header):
-                print('', *[typ_names[t] for t in sort_types], sep=' & ',
-                      end='\\\\\n')
-                printed_header = True
-            print(str(bu_model).capitalize(), *[f'{np.mean(cur[t].runtime):.4f}'
-                  for t in sort_types], sep=' & ', end='\\\\\n')
-
-    # plot the violin plots
-    plot_violins(raw_results, BUModel.get_types(), calcs)
+    # output the results
+    results_outputs(raw_results, [str(b) for b in BUModel.get_types()], calcs)

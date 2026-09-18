@@ -1,19 +1,18 @@
 import re
-from flitsr.merge import Merge  # type:ignore
-from flitsr.calculations.perms import Calc
 from argparse import ArgumentParser, FileType
-from itertools import chain, zip_longest, product
-from functools import partial
-from typing import Dict, List, Tuple, Collection, Optional
-from numpy import mean, std as stdev
-import numpy as np
-from matplotlib import pyplot as plt
-from matplotlib.ticker import FuncFormatter, AutoMinorLocator
-import seaborn as sns
-from enum import StrEnum, Enum, auto
 from collections import defaultdict
-from scipy.stats import shapiro, anderson
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from enum import StrEnum
+from functools import partial
+from itertools import chain, product
+from typing import Collection, Dict, List, Optional
+
+import numpy as np
+import seaborn as sns
+from flitsr.calculations.perms import Calc
+from flitsr.merge import Merge  # type:ignore
+from matplotlib import pyplot as plt
+from matplotlib.ticker import FuncFormatter
 
 
 def rec_dd(n: Optional[int] = None):
@@ -43,18 +42,6 @@ class Measure(StrEnum):
     RUNTIME = 'runtime'
 
 
-class Stat(StrEnum):
-    MEAN = 'mean'
-    STDEV = 'stddev'
-
-    @property
-    def f(self):
-        if (self is Stat.MEAN):
-            return mean
-        elif (self is Stat.STDEV):
-            return stdev
-
-
 @dataclass
 class RawData:
     category: str
@@ -62,6 +49,21 @@ class RawData:
     type: Type
     result: np.ndarray
     runtime: np.ndarray
+
+    def serialize(self):
+        # transform to dict format
+        dict_data = asdict(self)
+        # change np.ndarray to list
+        dict_data['result'] = dict_data['result'].tolist()
+        dict_data['runtime'] = dict_data['runtime'].tolist()
+        return dict_data
+
+    @staticmethod
+    def deserialize(data: Dict):
+        rd = RawData(**data)
+        rd.result = np.asarray(rd.result)
+        rd.runtime = np.asarray(rd.runtime)
+        return rd
 
 
 nums = {Calc.WEFFORT: [1, 2, 3, 4, 5], Calc.RECALL: [1, 5, 10, 20]}
@@ -93,32 +95,6 @@ def name(type_, calc, fault_num=None, runtime: Measure = Measure.RESULT):
         else:
             raise ValueError()
     return name
-
-
-def time_diff(t1: float, t2: float, perc=True) -> float:
-    if (not perc):
-        return (t1 - t2)
-    if (t1 == 0.0 and t2 == 0.0):
-        return 0.0
-    elif (t2 == 0.0):
-        return 100.0
-    elif (t1 > t2):
-        return min(100, ((t1 - t2)/t2)*100)
-    else:
-        return (- (t2 - t1)/t2)*100
-
-
-def val_diff(v1, v2, perc=True):
-    if (not perc):
-        return abs(v1 - v2)
-    if (v1 == 0 and v2 == 0):
-        return 0.0
-    elif (v1 == 0 or v2 == 0):
-        return 100.0
-    elif (v1 < 1e-3 and v2 < 1e-3):
-        return 0.0
-    else:
-        return abs(v1 - v2)*100/v2
 
 
 def bland_altman_plot(data1, data2, *args, **kwargs):
@@ -157,7 +133,10 @@ def get_raw_results(merge: Merge, metrics: Collection[str], modes: Collection[st
 
     # Compress lists of numbers for each stopping point into one (raw) list
     for metric, mode, calc in product(metrics, modes, calcs):
-        avgs = merge.avgs[mode][metric]
+        try:
+            avgs = merge.avgs[mode][metric]
+        except KeyError:
+            continue
         calcs = list(avgs.keys())
         # get stopping criteria nums (based on full enumeration)
         r = re.compile(re.escape(name(Type.FULL, calc, "<rpl>"))
@@ -192,7 +171,9 @@ def diff(golden, data):
 
 def plot_violins(raw_results: RawResults, categories: Collection[str],
                  calcs: Collection[Calc]):
-    colors = ['cyan', 'blue', 'red', 'green', 'magenta', 'yellow']
+    sns.set_theme()
+    sns.set_style("whitegrid")
+    # colors = ['cyan', 'blue', 'red', 'green', 'magenta', 'yellow']
     cs = len(calcs)
     ms = len(categories)
     plt.rc('font', weight='bold')
@@ -213,7 +194,8 @@ def plot_violins(raw_results: RawResults, categories: Collection[str],
                 dataset.append(diff(golden, data))
             cax.set_yscale('symlog', linthresh=0.2)
             parts = sns.violinplot(data=dataset, ax=cax, cut=0,
-                                   density_norm='area', linewidth=1.7)
+                                   density_norm='area', linewidth=1,
+                                   inner_kws={'box_width': 6, 'whis_width': 3})
             # sns.boxplot(data=dataset, saturation=0.5, width=0.1, whis=[0,100],
             #             boxprops={'zorder': 2, 'facecolor': 'k'}, ax=cax, showfliers=False,
             #             medianprops={'color': 'w'})
@@ -226,84 +208,19 @@ def plot_violins(raw_results: RawResults, categories: Collection[str],
                            rotation=45, ha='right')
             cax.set_title(f"{category} {calc_names[calc][1]}".capitalize(),
                           fontsize=14, fontweight='bold')
-            cax.grid()
+            # cax.grid()
             cax.yaxis.set_tick_params(labelleft=True)
             formatter = FuncFormatter(lambda y, _: '{:g}'.format(y))
             cax.yaxis.set_major_formatter(formatter)
             cax.yaxis.set_ticks([-200, -10, -1, -0.1, 0, 0.1, 1, 10, 200])
+            cax.yaxis.set_tick_params(which='both', bottom=True)
             # cax.yaxis.set_minor_locator(AutoMinorLocator())
             cax.yaxis.get_minor_locator().set_params(numticks=np.inf, subs=range(1, 10))
     plt.show()
 
 
-def calc_stats(merge: Merge, mode: str, metric: str, calc: Calc):
-    """
-    Calculate all the necessary statistics for the given metric, mode and
-    calculation.
-    """
-    avgs = merge.avgs[mode][metric]
-
-    results: Dict[Type, Dict[Result, Dict[Measure, Dict[Stat, float]]]] = rec_dd()
-
-    # Compress lists of numbers for each stopping point into one (raw) list,
-    # and calculate the mean and std-deviation
-    raw_calcs: Dict[Type, Dict[Measure, List]] = rec_dd()
-    for type_ in types[calc]:  # FULL, BASE, PART, (STMN)
-        for measure in Measure:  # RESULT, RUNTIME
-            chn = chain(*(avgs[name(type_, calc, i, measure)].all
-                          for i in nums[calc]))
-            cur_calcs = (np.asarray(list(chn))
-                         * (100 if calc is Calc.RECALL else 1))
-            raw_calcs[type_][measure] = cur_calcs
-            for stat in Stat:  # MEAN, STDEV
-                if (measure is Measure.RUNTIME and stat is Stat.STDEV):
-                    continue
-                results[type_][Result.RAW][measure][stat] = stat.f(cur_calcs)
-
-    # compute the absolute and relative differences to full sampling
-    for type_ in types[calc]:  # FULL, BASE, PART, (STMN)
-        if (type_ is Type.FULL):
-            continue
-        for result in [Result.ABS_DIFF, Result.REL_DIFF]:
-            # boolean for whether relative diff
-            perc = True if (result is Result.REL_DIFF) else False
-            for measure in Measure:  # RESULT, RUNTIME
-                # get the function for computing the diff
-                diff_func = (val_diff if (measure is Measure.RESULT)
-                             else time_diff)
-                # create the zipped values
-                zipped = zip(raw_calcs[type_][measure],
-                             raw_calcs[Type.FULL][measure], strict=True)
-                # create the diff array
-                diffs = [diff_func(v1, v2, perc=perc) for (v1, v2) in zipped]
-                for stat in Stat:  # MEAN, STDEV
-                    if (measure is Measure.RUNTIME and stat is Stat.STDEV):
-                        continue
-                    results[type_][result][measure][stat] = stat.f(diffs)
-    return results
-
-
-Results = Dict[str, Dict[str, Dict[Calc, Dict[Type, Dict[Result,
-               Dict[Measure, Dict[Stat, float]]]]]]]
-
-
-def merge_all(recurse):
-    """
-    Reads in the results files and calculates all statistics
-    """
-    # read in results
-    merge = Merge()
-    merge.read_results(recurse)
-    metrics = sorted(merge.metrics)
-    modes = sorted(merge.modes)
-
-    # results: Results = rec_dd()
-
-    all_calcs: List[Calc] = [Calc.WEFFORT, Calc.RECALL]
-
-    # get all of the raw results
-    raw_results = get_raw_results(merge, metrics, modes, all_calcs)
-
+def results_outputs(raw_results: RawResults, categories: List[str],
+                    calcs: List[Calc]):
     # code to get the max difference of a particular technique
     # t = raw_results['tarantula']['base'][Calc.RECALL]
     # diffs = diff(t[Type.FULL].result, t[Type.PART].result)
@@ -311,71 +228,28 @@ def merge_all(recurse):
     #          t[Type.BASE].result)
     # print(sorted(zp, key=lambda x: x[0], reverse=True)[:10])
 
-    # plot the violin plots
-    plot_violins(raw_results, metrics, all_calcs)
-
     # produce table for the run-times
-    for calc in all_calcs:
+    for calc in calcs:
         printed_header = False
-        for metric, mode in product(metrics, modes):
-            cur = raw_results[metric][calc]
+        for category in categories:
+            cur = raw_results[category][calc]
             sort_types = sorted(cur.keys(), key=lambda t: type_order.index(t))
             if (not printed_header):
                 print('', *[typ_names[t] for t in sort_types], sep=' & ',
                       end='\\\\\n')
                 printed_header = True
-            print(metric.capitalize(), *[f'{np.mean(cur[t].runtime):.4f}'
+            print(category.capitalize(), *[f'{np.mean(cur[t].runtime):.4f}'
                   for t in sort_types], sep=' & ', end='\\\\\n')
 
-    # produce table for tie info
-    class TieInfo(StrEnum):
-        FPT = 'faults per critical tie',
-        LPT = 'fault locs per critical tie',
-        TS = 'critical tie size',
-        NT = 'number of critical ties'
-
-    tieinfo_out = {TieInfo.FPT: '$\\obar{f}$', TieInfo.LPT: '$\\obar{l}$',
-                   TieInfo.TS: '$\\obar{n}$', TieInfo.NT: '$\\# s$'}
-
-    print('', *tieinfo_out.values(), sep=' & ', end='\\\\\n')
-    for metric, mode in product(metrics, modes):
-        avgs = merge.avgs[mode][metric]
-        print(metric.capitalize(), *[f'{avgs[ti].eval():.2f}' for ti in TieInfo],
-              sep=' & ', end='\\\\\n')
-
-    # calculate stats for each metric and mode
-    # for metric in metrics:
-    #     for mode in modes:
-    #         for calc in Calc:  # EFFORT, RECALL
-    #             results[mode][metric][calc] = calc_stats(merge, mode,
-    #                                                      metric, calc)
-    # print_results(results, modes, metrics)
+    # plot the violin plots
+    plot_violins(raw_results, categories, calcs)
 
 
-def print_results(results: Results, modes: List[str], metrics: List[str]):
-    Rs = list(Result)
-    for metric in sorted(metrics):
-        for mode in sorted(modes):
-            print(f'{mode} {metric}:')
-            r = results[mode][metric]
-            for calc in sorted(Calc):
-                print(f'{calc}')
-                print('&', end=' ')
-                Ts = [t for t in Type if t in r[calc].keys()]
-                print(*Ts, sep=' & ', end='\\\\\n')
-                print(*Rs, sep=' & ', end='\\\\\n')
-                for measure in sorted(Measure):
-                    for stat in sorted(Stat):
-                        if (measure is Measure.RUNTIME and stat is Stat.STDEV):
-                            continue
-                        print(f'{stat} {measure}', end=' & ')
-                        for type_ in Ts:
-                            for result in Rs:
-                                item = r[calc][type_][result][measure][stat]
-                                if (isinstance(item, defaultdict)):
-                                    continue
-                                print(f'{item:.4f}', end=' & ')
-                        print('\\\\')
+class TieInfo(StrEnum):
+    FPT = 'faults per critical tie',
+    LPT = 'fault locs per critical tie',
+    TS = 'critical tie size',
+    NT = 'number of critical ties'
 
 
 if __name__ == "__main__":
@@ -387,6 +261,24 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # merge results
-    merge_all(args.recurse)
-    # import json
-    # json.dump(results, args.output_file, indent=2)
+    merge = Merge()
+    merge.read_results(args.recurse)
+    metrics = sorted(merge.metrics)
+    modes = sorted(merge.modes)
+
+    all_calcs: List[Calc] = [Calc.WEFFORT, Calc.RECALL]
+
+    # get all of the raw results
+    raw_results: RawResults = get_raw_results(merge, metrics, modes, all_calcs)
+
+    results_outputs(raw_results, metrics, all_calcs)
+
+    # produce table for tie info
+    tieinfo_out = {TieInfo.FPT: '$\\obar{f}$', TieInfo.LPT: '$\\obar{l}$',
+                   TieInfo.TS: '$\\obar{n}$', TieInfo.NT: '$\\# s$'}
+
+    print('', *tieinfo_out.values(), sep=' & ', end='\\\\\n')
+    for metric, mode in product(metrics, modes):
+        avgs = merge.avgs[mode][metric]
+        print(metric.capitalize(), *[f'{avgs[ti].eval():.2f}' for ti in TieInfo],
+              sep=' & ', end='\\\\\n')
