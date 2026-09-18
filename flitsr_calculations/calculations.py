@@ -53,14 +53,23 @@ def weffort_rt(ties: Ties, collapse: bool, n: int) -> float:
 
 # <-------------------------- Sampled calculations -------------------------->
 
+last_fault_effort = None
+
 @calculation(partial(nth_print_name, name='full sampled wasted effort'),
              "Display the (full sampled) wasted effort to the Nth fault",
              "f-sampled", "full-sampled-wasted-effort")
 @parameter('n', type=check_fault_type)
 @timing
 def full_sampled_effort(ties: Ties, collapse: bool, n: int) -> float:
-    return effort_exp_val(ties, min(len(ties.faults), n), weffort=True,
-                          collapse=collapse, tie_exp_func=_sampled)
+    global last_fault_effort
+    # will only work if n==len(ties.faults) is run before n>len(ties.faults)
+    if (n > len(ties.faults) and last_fault_effort is not None):
+        return last_fault_effort  # type:ignore
+    effort = effort_exp_val(ties, min(len(ties.faults), n), weffort=True,
+                            collapse=collapse, tie_exp_func=_sampled)
+    if (n >= len(ties.faults)):
+        last_fault_effort = effort
+    return effort
 
 
 def nth_sampled_print_name(name: str, ties: Ties, collapse: bool, n: int,
@@ -92,6 +101,7 @@ def _sampled(tie: Tie, k: int, weffort: bool, collapse=False,
              "fault", "full-sampled-effort-time")
 @parameter('n', type=check_fault_type)
 def full_sampled_rt(ties: Ties, collapse: bool, n: int) -> float:
+    n = min(n, len(ties.faults))
     return get_runtime('full_sampled_effort', {'n': n})
 
 
