@@ -101,7 +101,7 @@ def _sampled(tie: Tie, k: int, weffort: bool, collapse=False,
              "fault", "full-sampled-effort-time")
 @parameter('n', type=check_fault_type)
 def full_sampled_rt(ties: Ties, collapse: bool, n: int) -> float:
-    n = min(n, len(ties.faults))
+    n = min(n, max(len(ties.faults), 1))
     return get_runtime('full_sampled_effort', {'n': n})
 
 

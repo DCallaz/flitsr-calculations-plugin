@@ -256,9 +256,14 @@ class TieInfo(StrEnum):
 if __name__ == "__main__":
     # get cmd-line args
     parser = ArgumentParser()
-    parser.add_argument('-r', '--recurse', action='store_true')
-    parser.add_argument('-o', '--output-file', action='store',
-                        type=FileType('w'))
+    parser.add_argument('-r', '--recurse', action='store_true',
+                        help='By default this script will only look for '
+                        'results files in the currently directory. With this '
+                        'option, it will recursively look in all subdirectories '
+                        'from the current directory. Useful for merging results '
+                        'from multiple projects.')
+    # parser.add_argument('-o', '--output-file', action='store',
+    #                     type=FileType('w'))
     parser.add_argument('-m', '--metrics', action='extend', nargs='+',
                         help='Specify the metrics to merge results for, may '
                         'be specified multiple times.')
